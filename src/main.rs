@@ -14,6 +14,14 @@ impl Vec3 {
         Vec3 { x, y, z }
     }
 
+    fn random(min: f32, max: f32) -> Vec3 {
+        Vec3 {
+            x: random_double(min, max),
+            y: random_double(min, max),
+            z: random_double(min, max),
+        }
+    }
+
     fn len2(&self) -> f32 {
         self.x * self.x + self.y * self.y + self.z * self.z
     }
@@ -134,37 +142,6 @@ impl Ray {
     fn at(&self, t: f32) -> Vec3 {
         self.origin + self.dir * t
     }
-
-    fn color(&self, objects: &Vec<Sphere>) -> Vec3 {
-        let mut tnear = f32::INFINITY;
-        let mut hit: Option<Hit> = None;
-
-        for obj in objects {
-            // println!("{:?}", obj);
-            match obj.hit(self) {
-                Intersection::Missed => continue,
-                Intersection::Hit(h) => {
-                    // eprintln!("t {}", h.t);
-                    // eprintln!("s {:?}", obj);
-                    if h.t < tnear {
-                        tnear = h.t;
-                        hit = Some(h);
-                    }
-                }
-            }
-        }
-
-        match hit {
-            // Object.
-            Some(h) => (h.normal + Vec3::new(1., 1., 1.)) * 0.5,
-            // Background.
-            None => {
-                let unit_direction = unit_vector(self.dir);
-                let t = 0.5 * (unit_direction.y + 1.0);
-                Vec3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vec3::new(0.5, 0.7, 1.0) * t
-            }
-        }
-    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -175,13 +152,19 @@ struct Sphere {
 
 struct Hit {
     t: f32,
+    p: Vec3,
     normal: Vec3,
     front: bool,
 }
 
 impl Hit {
-    fn new(t: f32, normal: Vec3, front: bool) -> Hit {
-        Hit { t, normal, front }
+    fn new(t: f32, p: Vec3, normal: Vec3, front: bool) -> Hit {
+        Hit {
+            t,
+            p,
+            normal,
+            front,
+        }
     }
 }
 
@@ -221,7 +204,7 @@ impl Sphere {
             false => -outward_normal,
         };
 
-        Intersection::Hit(Hit::new(root, normal, front))
+        Intersection::Hit(Hit::new(root, p, normal, front))
     }
 }
 
@@ -235,12 +218,26 @@ fn unit_vector(v: Vec3) -> Vec3 {
     }
 }
 
+fn random_in_unit_sphere() -> Vec3 {
+    loop {
+        let p = Vec3::random(-1., 1.);
+        match p.len2() >= 1. {
+            true => continue,
+            false => return p,
+        }
+    }
+}
+
 fn clip(v: f32, min: f32, max: f32) -> f32 {
     match v {
-        c if c >  max => max,
+        c if c > max => max,
         c if c < min => min,
-        c=>  c,
+        c => c,
     }
+}
+
+fn random_double(min: f32, max: f32) -> f32 {
+    min + (max - min) * rand::random::<f32>()
 }
 
 fn write_color(p: &Vec3, samples_per_pixel: i32) {
@@ -253,12 +250,58 @@ fn write_color(p: &Vec3, samples_per_pixel: i32) {
     )
 }
 
+fn ray_color(ray: &Ray, objects: &Vec<Sphere>, depth: i32) -> Vec3 {
+    if depth <= 0 {
+        return Vec3::new(0., 0., 0.);
+    }
+
+    let mut tnear = f32::INFINITY;
+    let mut hit: Option<Hit> = None;
+
+    for obj in objects {
+        // println!("{:?}", obj);
+        match obj.hit(ray) {
+            Intersection::Missed => continue,
+            Intersection::Hit(h) => {
+                // eprintln!("t {}", h.t);
+                // eprintln!("s {:?}", obj);
+                if h.t < tnear {
+                    tnear = h.t;
+                    hit = Some(h);
+                }
+            }
+        }
+    }
+
+    match hit {
+        // Object.
+        Some(h) => {
+            let target = h.p + h.normal + random_in_unit_sphere();
+            ray_color(
+                &Ray {
+                    origin: h.p,
+                    dir: target - h.p,
+                },
+                objects,
+                depth - 1,
+            ) * 0.5
+        }
+        // Background.
+        None => {
+            let unit_direction = unit_vector(ray.dir);
+            let t = 0.5 * (unit_direction.y + 1.0);
+            Vec3::new(1.0, 1.0, 1.0) * (1.0 - t) + Vec3::new(0.5, 0.7, 1.0) * t
+        }
+    }
+}
+
 fn main() {
     // Image
     let aspect_ratio = 16.0 / 9.0;
-    let image_width = 600;
+    let image_width = 300;
     let image_height = (image_width as f32 / aspect_ratio) as i32;
     let samples_per_pixel = 50;
+    let max_depth = 50;
 
     // Camera
     let cam = Camera::new();
@@ -303,8 +346,8 @@ fn main() {
             for _ in 0..samples_per_pixel {
                 let u = (i as f32 + rand::random::<f32>()) / (image_width - 1) as f32;
                 let v = (j as f32 + rand::random::<f32>()) / (image_height - 1) as f32;
-                let ray = cam.get_ray(u, v);                
-                color = color + ray.color(&objects);
+                let ray = cam.get_ray(u, v);
+                color = color + ray_color(&ray, &objects, max_depth);
             }
             image.push(color);
         }
@@ -312,7 +355,7 @@ fn main() {
 
     println!("P3\n{} {}\n255\n", image_width, image_height);
     for p in &image {
-       write_color(p, samples_per_pixel);
+        write_color(p, samples_per_pixel);
     }
     eprintln!("Done!");
 }
