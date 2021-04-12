@@ -1,3 +1,5 @@
+extern crate rand;
+
 use std::{ops, vec};
 
 #[derive(Debug, Copy, Clone)]
@@ -93,7 +95,28 @@ struct Camera {
 }
 
 impl Camera {
-    fn get_ray(self, u: f32, v: f32) -> Ray {
+    fn new() -> Camera {
+        let aspect_ratio = 16.0 / 9.0;
+        let viewport_height = 2.0;
+        let viewport_width = aspect_ratio * viewport_height;
+        let focal_length = 1.0;
+
+        let origin = Vec3::new(0., 0., 0.);
+        let horizontal = Vec3::new(viewport_width, 0.0, 0.0);
+        let vertical = Vec3::new(0.0, viewport_height, 0.0);
+
+        Camera {
+            origin,
+            horizontal,
+            vertical,
+            lower_left_corner: origin
+                - horizontal / 2.
+                - vertical / 2.
+                - Vec3::new(0., 0., focal_length),
+        }
+    }
+
+    fn get_ray(&self, u: f32, v: f32) -> Ray {
         Ray {
             origin: self.origin,
             dir: self.lower_left_corner + self.horizontal * u + self.vertical * v - self.origin,
@@ -112,7 +135,25 @@ impl Ray {
         self.origin + self.dir * t
     }
 
-    fn color(&self, hit: Option<Hit>) -> Vec3 {
+    fn color(&self, objects: &Vec<Sphere>) -> Vec3 {
+        let mut tnear = f32::INFINITY;
+        let mut hit: Option<Hit> = None;
+
+        for obj in objects {
+            // println!("{:?}", obj);
+            match obj.hit(self) {
+                Intersection::Missed => continue,
+                Intersection::Hit(h) => {
+                    // eprintln!("t {}", h.t);
+                    // eprintln!("s {:?}", obj);
+                    if h.t < tnear {
+                        tnear = h.t;
+                        hit = Some(h);
+                    }
+                }
+            }
+        }
+
         match hit {
             // Object.
             Some(h) => (h.normal + Vec3::new(1., 1., 1.)) * 0.5,
@@ -194,22 +235,33 @@ fn unit_vector(v: Vec3) -> Vec3 {
     }
 }
 
+fn clip(v: f32, min: f32, max: f32) -> f32 {
+    match v {
+        c if c >  max => max,
+        c if c < min => min,
+        c=>  c,
+    }
+}
+
+fn write_color(p: &Vec3, samples_per_pixel: i32) {
+    let scale = 1.0 / samples_per_pixel as f32;
+    println!(
+        "{} {} {}",
+        (clip(p.x * scale, 0., 0.999) * 255.) as i32,
+        (clip(p.y * scale, 0., 0.999) * 255.) as i32,
+        (clip(p.z * scale, 0., 0.999) * 255.) as i32
+    )
+}
+
 fn main() {
     // Image
     let aspect_ratio = 16.0 / 9.0;
     let image_width = 600;
     let image_height = (image_width as f32 / aspect_ratio) as i32;
+    let samples_per_pixel = 50;
 
     // Camera
-    let viewport_height = 2.0;
-    let viewport_width = aspect_ratio * viewport_height;
-    let focal_length = 1.0;
-
-    let origin = Vec3::new(0., 0., 0.);
-    let horizontal = Vec3::new(viewport_width, 0., 0.);
-    let vertical = Vec3::new(0., viewport_height, 0.);
-    let lower_left_corner =
-        origin - horizontal / 2. - vertical / 2. - Vec3::new(0., 0., focal_length);
+    let cam = Camera::new();
 
     //
     // Objects in scene.
@@ -247,44 +299,20 @@ fn main() {
     let mut image: Vec<Vec3> = vec![];
     for j in (0..image_height).rev() {
         for i in 0..image_width {
-            let u = i as f32 / (image_width - 1) as f32;
-            let v = j as f32 / (image_height - 1) as f32;
-            let ray = Ray {
-                origin,
-                dir: lower_left_corner + horizontal * u + vertical * v - origin,
-            };
-
-            let mut tnear = f32::INFINITY;
-            let mut hit: Option<Hit> = None;
-
-            for obj in &objects {
-                // println!("{:?}", obj);
-                match obj.hit(&ray) {
-                    Intersection::Missed => continue,
-                    Intersection::Hit(h) => {
-                        eprintln!("t {}", h.t);
-                        eprintln!("s {:?}", obj);
-                        if h.t < tnear {
-                            tnear = h.t;
-                            hit = Some(h);
-                        }
-                    }
-                }
+            let mut color = Vec3::new(0., 0., 0.);
+            for _ in 0..samples_per_pixel {
+                let u = (i as f32 + rand::random::<f32>()) / (image_width - 1) as f32;
+                let v = (j as f32 + rand::random::<f32>()) / (image_height - 1) as f32;
+                let ray = cam.get_ray(u, v);                
+                color = color + ray.color(&objects);
             }
-
-            let color = ray.color(hit);
             image.push(color);
         }
     }
 
     println!("P3\n{} {}\n255\n", image_width, image_height);
     for p in &image {
-        println!(
-            "{} {} {}",
-            (p.x * 255.) as i32,
-            (p.y * 255.) as i32,
-            (p.z * 255.) as i32
-        )
+       write_color(p, samples_per_pixel);
     }
     eprintln!("Done!");
 }
